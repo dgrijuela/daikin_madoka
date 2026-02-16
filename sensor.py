@@ -1,4 +1,6 @@
 """Support for Daikin AC sensors."""
+import logging
+
 from homeassistant.const import (
     CONF_TYPE,
     CONF_UNIT_OF_MEASUREMENT,
@@ -20,6 +22,8 @@ from .const import (
 from pymadoka import Controller
 from pymadoka.feature import ConnectionException, ConnectionStatus
 
+_LOGGER = logging.getLogger(__name__)
+
 
 async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
     """Old way of setting up the Daikin sensors.
@@ -32,7 +36,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up Daikin climate based on config_entry."""
     ent = []
-    for controller in hass.data[DOMAIN][CONTROLLERS].values():
+    for controller in hass.data[DOMAIN][entry.entry_id][CONTROLLERS].values():
         ent.append(MadokaSensor(controller))
     async_add_entities(ent)
 
@@ -92,8 +96,24 @@ class MadokaSensor(Entity):
             await self.controller.temperatures.query()
         except ConnectionAbortedError:
             pass
-        except ConnectionException:
-            pass
+        except ConnectionException as exc:
+            error_msg = str(exc)
+            if any(s in error_msg.lower() for s in [
+                "operation already in progress",
+                "br-connection-canceled",
+                "dbus",
+            ]):
+                _LOGGER.debug(
+                    "Bluetooth stack issue updating sensor %s: %s",
+                    self.name,
+                    error_msg,
+                )
+            else:
+                _LOGGER.warning(
+                    "Could not update sensor %s: %s",
+                    self.name,
+                    error_msg,
+                )
 
     @property
     async def async_device_info(self):

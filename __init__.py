@@ -17,12 +17,12 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.core import HomeAssistant
 
 from . import config_flow  # noqa: F401
-from .const import CONTROLLERS, DOMAIN
+from .const import CONF_CONTROLLER_TIMEOUT, CONTROLLERS, DOMAIN, TIMEOUT
 
 PARALLEL_UPDATES = 0
 MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=60)
 
-COMPONENT_TYPES = ["climate"]
+COMPONENT_TYPES = ["climate", "sensor"]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,22 +67,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         adapter=entry.data[CONF_DEVICE], timeout=entry.data[CONF_SCAN_INTERVAL]
     )
 
+    controller_timeout = entry.data.get(CONF_CONTROLLER_TIMEOUT, TIMEOUT)
+
     for device, controller in controllers.items():
         try:
-            await asyncio.wait_for(controller.start(), timeout=10)
-        except ConnectionAbortedError as connection_aborted_error:
-            _LOGGER.error(
-                "Could not connect to device %s: %s",
-                device,
-                str(connection_aborted_error),
-            )
+            await asyncio.wait_for(controller.start(), timeout=controller_timeout)
+        except (ConnectionAbortedError, asyncio.TimeoutError) as exc:
+            error_msg = str(exc)
+            if any(s in error_msg.lower() for s in [
+                "operation already in progress",
+                "br-connection-canceled",
+                "dbus",
+            ]):
+                _LOGGER.debug(
+                    "Bluetooth stack issue connecting to %s: %s",
+                    device,
+                    error_msg,
+                )
+            else:
+                _LOGGER.error(
+                    "Could not connect to device %s: %s",
+                    device,
+                    error_msg,
+                )
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {CONTROLLERS: controllers}
-    for component in COMPONENT_TYPES:
-        coroutine = hass.config_entries.async_forward_entry_setups(entry, [component])
-        hass.async_create_task(coroutine)
-
+    await hass.config_entries.async_forward_entry_setups(entry, COMPONENT_TYPES)
 
     return True
 
