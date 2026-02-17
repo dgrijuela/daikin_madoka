@@ -3,9 +3,9 @@
   "name": "Daikin Madoka",
   "config_flow": true,
   "documentation": "https://github.com/dgrijuela/daikin_madoka",
-  "requirements": ["pymadoka==0.2.13"],
+  "requirements": ["pymadoka==0.2.13", "bleak-retry-connector>=3.5.0"],
   "codeowners": ["@dgrijuela"],
   "iot_class": "local_polling",
   "integration_type": "device",
-  "version": "1.0.5"
+  "version": "1.0.6"
 }

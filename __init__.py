@@ -17,6 +17,64 @@ if not hasattr(bleak, "discover") and hasattr(bleak, "BleakScanner"):
         "Applied bleak.discover shim to BleakScanner.discover for compatibility"
     )
 
+# Monkey-patch pymadoka's Connection class to use bleak-retry-connector.
+# pymadoka calls raw BleakClient.connect() which is unreliable on modern HA
+# (2025.9+). We replace _select_device() and _connect() to use
+# establish_connection(BleakClientWithServiceCache, ...) instead.
+import pymadoka.connection as _pmconn
+from bleak_retry_connector import establish_connection, BleakClientWithServiceCache
+
+
+class _Sentinel:
+    """Truthy sentinel so start()'s `if self.client` check passes."""
+    def __bool__(self):
+        return True
+
+
+async def _patched_select_device(self):
+    """Find the BLEDevice in the discovery cache without creating a raw BleakClient."""
+    for d in _pmconn.DISCOVERED_DEVICES_CACHE:
+        if d.address.upper() == self.address.upper():
+            self._ble_device = d
+            self.name = d.name
+            self.client = _Sentinel()
+            return
+    self.connection_status = _pmconn.ConnectionStatus.ABORTED
+    raise ConnectionAbortedError(
+        f"Could not find bluetooth device for the address {self.address}. "
+        "Please follow the instructions on device pairing."
+    )
+
+
+async def _patched_connect(self):
+    """Connect using bleak-retry-connector for reliable BLE connections."""
+    try:
+        if isinstance(self.client, _Sentinel) or not self.client.is_connected:
+            self.client = await establish_connection(
+                BleakClientWithServiceCache,
+                self._ble_device,
+                self.address,
+                disconnected_callback=self.on_disconnect,
+            )
+        if self.client.is_connected:
+            _pmconn.logger.info("Connected to %s", self.address)
+            self.connection_status = _pmconn.ConnectionStatus.CONNECTED
+            await self.client.start_notify(
+                _pmconn.NOTIFY_CHAR_UUID, self.notification_handler,
+            )
+        else:
+            _pmconn.logger.info("Failed to connect to %s", self.address)
+    except Exception as e:
+        if "Software caused connection abort" not in str(e):
+            _pmconn.logger.error(e)
+        if not self.reconnect:
+            raise
+        _pmconn.logger.debug("Reconnecting...")
+
+
+_pmconn.Connection._select_device = _patched_select_device
+_pmconn.Connection._connect = _patched_connect
+
 from pymadoka import Controller, discover_devices, force_device_disconnect
 import voluptuous as vol
 
