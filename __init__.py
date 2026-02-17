@@ -3,6 +3,20 @@ import asyncio
 from datetime import timedelta
 import logging
 
+# Bleak dropped the module-level discover() in newer versions.
+# Provide a shim so older pymadoka continues to import successfully.
+import bleak
+
+if not hasattr(bleak, "discover") and hasattr(bleak, "BleakScanner"):
+    async def _discover(*args, **kwargs):
+        return await bleak.BleakScanner.discover(*args, **kwargs)
+
+    bleak.discover = _discover
+    _LOGGER = logging.getLogger(__name__)
+    _LOGGER.debug(
+        "Applied bleak.discover shim to BleakScanner.discover for compatibility"
+    )
+
 from pymadoka import Controller, discover_devices, force_device_disconnect
 import voluptuous as vol
 
